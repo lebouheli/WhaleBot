@@ -35,7 +35,6 @@ class Filters:
     # Public trades endpoint supports large limits
     trades_page_size: int = 500
     max_trade_pages_per_batch: int = 20
-    batch_market_count: int = 10
 
     # Wallet selection
     volume_min_usd: float = 2_000
@@ -94,7 +93,7 @@ def parse_dt(value: Any) -> datetime | None:
             ts = float(value)
             if ts > 1e12:
                 ts = ts / 1000.0
-            return datetime.utcfromtimestamp(ts)
+            return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
         except Exception:
             return None
 
@@ -125,9 +124,6 @@ def safe_float(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
 
-
-def chunked(seq: list[str], size: int) -> list[list[str]]:
-    return [seq[i:i + size] for i in range(0, len(seq), size)]
 
 
 def unique_trade_key(trade: dict[str, Any]) -> tuple:
@@ -201,20 +197,18 @@ class APIClient:
         )
         return data if isinstance(data, list) else []
 
-    def get_public_trades_for_markets(
+    def get_public_trades_for_market(
         self,
-        market_ids: list[str],
+        market_id: str,
         limit: int,
         offset: int = 0,
         taker_only: bool = True,
     ) -> list[dict[str, Any]]:
-        if not market_ids:
-            return []
-
+        """Une requête par marché — l'API Data n'accepte qu'un seul conditionId."""
         data = self.get_json(
             f"{DATA_BASE}/trades",
             params={
-                "market": ",".join(market_ids),   # condition IDs, comma-separated
+                "market": market_id,
                 "limit": limit,
                 "offset": offset,
                 "takerOnly": str(taker_only).lower(),
@@ -320,15 +314,14 @@ def fetch_public_trades(
     if not market_ids:
         return all_trades
 
-    batches = chunked(market_ids, FILTERS.batch_market_count)
-
-    for batch_index, batch in enumerate(batches, start=1):
-        print(f"\nBatch {batch_index}/{len(batches)} - fetching trades for {len(batch)} markets")
+    for market_index, market_id in enumerate(market_ids, start=1):
+        question = market_meta[market_id].question[:55]
+        print(f"\n[{market_index:02d}/{len(market_ids)}] {question}")
 
         for page in range(FILTERS.max_trade_pages_per_batch):
             offset = page * FILTERS.trades_page_size
-            trades = client.get_public_trades_for_markets(
-                market_ids=batch,
+            trades = client.get_public_trades_for_market(
+                market_id=market_id,
                 limit=FILTERS.trades_page_size,
                 offset=offset,
                 taker_only=True,
@@ -663,4 +656,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
